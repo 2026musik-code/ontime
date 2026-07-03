@@ -1,0 +1,6 @@
+{
+  "name": "Termux CF Worker Generator",
+  "description": "Generate Cloudflare Worker code to serve auto-run scripts for Termux.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
