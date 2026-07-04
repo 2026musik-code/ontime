@@ -4,7 +4,12 @@ import { Copy, CheckCircle2, Server, Smartphone, Globe, Shield, Link2, Save } fr
 export default function App() {
   const [localPort, setLocalPort] = useState('8080');
   const [authToken, setAuthToken] = useState(Math.random().toString(36).substring(2, 15));
-  const [workerUrl, setWorkerUrl] = useState('');
+  const [workerUrl, setWorkerUrl] = useState(() => {
+    if (typeof window !== 'undefined' && window.location.hostname.includes('.workers.dev')) {
+      return window.location.origin;
+    }
+    return '';
+  });
   const [kvId, setKvId] = useState('fc7e78f9ecec4a4b95fbf4ab82e1e057');
   const [copiedWorker, setCopiedWorker] = useState(false);
   const [copiedTermux, setCopiedTermux] = useState(false);
@@ -36,7 +41,14 @@ export default function App() {
         body: JSON.stringify({ port: localPort, token: authToken })
       });
       
-      if (!response.ok) throw new Error('Failed to save. Make sure worker is deployed and KV is bound.');
+      if (!response.ok) {
+        let errDetails = 'Make sure worker is deployed and KV is bound in wrangler.toml.';
+        try {
+          const errData = await response.json();
+          if (errData.error) errDetails = `Server Error: ${errData.error}`;
+        } catch(e) {}
+        throw new Error(`Failed to save. ${errDetails}`);
+      }
       
       setSaveStatus('success');
     } catch (err: any) {
@@ -111,8 +123,12 @@ if [ ! -f package.json ]; then
   npm init -y > /dev/null 2>&1
 fi
 
-echo -e "\\\\e[1;33m[*] Menginstall modul WebSocket...\\\\e[0m"
-npm install ws > /dev/null 2>&1
+echo -e "\\\\e[1;33m[*] Menginstall modul WebSocket & http-server...\\\\e[0m"
+npm install ws http-server > /dev/null 2>&1
+
+echo -e "\\\\e[1;33m[*] Memulai Web Server lokal di port ${LOCAL_PORT} (menampilkan file)...\\\\e[0m"
+pkill -f "http-server" > /dev/null 2>&1 || true
+npx http-server ~ -p ${LOCAL_PORT} --cors -c-1 -s &
 
 cat << 'EOF' > ~/.termux_tunnel/tunnel.js
 const WebSocket = require('ws');
@@ -423,14 +439,31 @@ cd ~/.termux_tunnel && node tunnel.js
       <main className="flex-1 flex flex-col lg:flex-row p-4 md:p-6 gap-6 overflow-y-auto lg:overflow-hidden">
         {/* Left Column: Config */}
         <div className="lg:w-1/3 flex flex-col gap-6 lg:overflow-y-auto">
+          {/* Instruksi KV */}
+          <section className="bg-slate-900 border border-slate-800 rounded-lg p-5 flex flex-col gap-3">
+            <h2 className="text-xs font-bold uppercase tracking-widest text-emerald-400 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4" />
+              1. Setup KV (Wajib!)
+            </h2>
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Sebelum deploy Worker, buka terminal Anda dan buat namespace KV:
+            </p>
+            <div className="bg-slate-950 p-3 rounded border border-slate-800 text-sky-400 font-mono text-[11px] select-all">
+              npx wrangler kv:namespace create accounts_kv
+            </div>
+            <p className="text-[10px] text-slate-500 italic">
+              Copy <b>ID</b> yang dihasilkan dan masukkan ke form di bawah ini.
+            </p>
+          </section>
+
           <section className="bg-slate-900 border border-slate-800 rounded-lg p-5 flex flex-col gap-4">
             <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
               <Globe className="w-4 h-4" />
-              KV Tunnel Configuration
+              2. Tunnel Configuration
             </h2>
             <div className="flex flex-col gap-4">
               <div className="pb-2 border-b border-slate-800">
-                <label className="block text-[10px] text-slate-500 uppercase mb-1 font-mono">1. Worker URL Anda</label>
+                <label className="block text-[10px] text-slate-500 uppercase mb-1 font-mono">Worker URL Anda</label>
                 <div className="flex items-center bg-slate-950 border border-slate-700 rounded overflow-hidden focus-within:border-emerald-500 transition-colors">
                   <span className="px-3 text-slate-500 font-mono border-r border-slate-700"><Link2 className="w-4 h-4" /></span>
                   <input
@@ -458,7 +491,7 @@ cd ~/.termux_tunnel && node tunnel.js
               </div>
               
               <div>
-                <label className="block text-[10px] text-slate-500 uppercase mb-1 font-mono">2. Localhost Port (Termux)</label>
+                <label className="block text-[10px] text-slate-500 uppercase mb-1 font-mono">Localhost Port (Termux)</label>
                 <div className="flex items-center bg-slate-950 border border-slate-700 rounded overflow-hidden">
                   <span className="px-3 text-slate-500 font-mono text-sm border-r border-slate-700">PORT</span>
                   <input
@@ -471,7 +504,7 @@ cd ~/.termux_tunnel && node tunnel.js
                 </div>
               </div>
               <div>
-                <label className="block text-[10px] text-slate-500 uppercase mb-1 font-mono">3. Security Token</label>
+                <label className="block text-[10px] text-slate-500 uppercase mb-1 font-mono">Security Token</label>
                 <div className="flex items-center bg-slate-950 border border-slate-700 rounded overflow-hidden">
                   <span className="px-3 text-slate-500 font-mono border-r border-slate-700"><Shield className="w-4 h-4" /></span>
                   <input
@@ -515,7 +548,7 @@ cd ~/.termux_tunnel && node tunnel.js
           <section className="bg-slate-900 border border-slate-800 rounded-lg p-5 flex flex-col gap-3 shrink-0">
             <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
               <Smartphone className="w-4 h-4" />
-              4. Auto-Install di Termux
+              3. Auto-Install di Termux
             </h2>
             <div className="bg-slate-950 rounded-md p-4 font-mono text-xs border border-emerald-500/30 leading-relaxed overflow-hidden relative group">
               <span className="text-emerald-500 block break-all pr-8">
