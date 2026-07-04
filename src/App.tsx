@@ -36,16 +36,19 @@ echo -e "\\\\e[1;34m |      ONTIME TERMUX TUNNEL INSTALLER           |\\\\e[0m"
 echo -e "\\\\e[1;34m[+]===============================================[+]\\\\e[0m"
 echo -e "\\\\e[1;32m[+] Menyiapkan Tunnel Localhost ke Cloudflare Worker...\\\\e[0m"
 
-pkg update -y > /dev/null 2>&1
-pkg install nodejs -y > /dev/null 2>&1
+echo -e "\\\\e[1;33m[*] Mengupdate package dan menginstall Node.js (ini mungkin butuh beberapa menit)...\\\\e[0m"
+pkg update -y
+pkg install nodejs -y
 
 mkdir -p ~/.termux_tunnel
 cd ~/.termux_tunnel
 
 if [ ! -f package.json ]; then
-  npm init -y > /dev/null 2>&1
+  npm init -y
 fi
-npm install ws > /dev/null 2>&1
+
+echo -e "\\\\e[1;33m[*] Menginstall modul WebSocket...\\\\e[0m"
+npm install ws
 
 cat << 'EOF' > ~/.termux_tunnel/tunnel.js
 const WebSocket = require('ws');
