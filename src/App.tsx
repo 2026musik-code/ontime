@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Copy, CheckCircle2, Server, Smartphone, Globe, Shield, Link2 } from 'lucide-react';
+import { Copy, CheckCircle2, Server, Smartphone, Globe, Shield, Link2, Save } from 'lucide-react';
 
 export default function App() {
   const [localPort, setLocalPort] = useState('8080');
@@ -7,17 +7,52 @@ export default function App() {
   const [workerUrl, setWorkerUrl] = useState('');
   const [copiedWorker, setCopiedWorker] = useState(false);
   const [copiedTermux, setCopiedTermux] = useState(false);
-  const [originUrl, setOriginUrl] = useState('https://YOUR_WORKER_URL.workers.dev');
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      setOriginUrl(window.location.origin);
-    }
-  }, []);
+  const [copiedToml, setCopiedToml] = useState(false);
+  
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [errorMessage, setErrorMessage] = useState('');
 
   const displayUrl = workerUrl.trim() ? (workerUrl.startsWith('http') ? workerUrl : `https://${workerUrl}`) : 'https://YOUR_WORKER.workers.dev';
   const cleanUrl = displayUrl.replace(/\/$/, '');
   const installCmd = `curl -sL ${cleanUrl}/setup | bash`;
+
+  const saveConfigToKV = async () => {
+    if (!workerUrl.trim() || workerUrl.includes('YOUR_WORKER')) {
+      setErrorMessage('Silakan masukkan URL Worker yang valid terlebih dahulu.');
+      setSaveStatus('error');
+      return;
+    }
+    
+    setIsSaving(true);
+    setSaveStatus('idle');
+    setErrorMessage('');
+    
+    try {
+      const response = await fetch(`${cleanUrl}/api/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ port: localPort, token: authToken })
+      });
+      
+      if (!response.ok) throw new Error('Failed to save. Make sure worker is deployed and KV is bound.');
+      
+      setSaveStatus('success');
+    } catch (err: any) {
+      setSaveStatus('error');
+      setErrorMessage(err.message || 'Gagal menyimpan konfigurasi. Pastikan Worker sudah di-deploy dengan benar.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const wranglerToml = `name = "termux-tunnel"
+main = "src/index.js"
+compatibility_date = "2024-03-20"
+
+[[kv_namespaces]]
+binding = "accounts_kv"
+id = "fc7e78f9ecec4a4b95fbf4ab82e1e057"`;
 
   const workerCode = `let tunnelWs = null;
 const pendingRequests = new Map();
@@ -25,10 +60,39 @@ const pendingRequests = new Map();
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const AUTH_TOKEN = "${authToken}";
-    const LOCAL_PORT = ${localPort};
     
-    // 1. Endpoint instalasi otomatis untuk Termux
+    // --- API Endpoint: Simpan Config dari Web UI ke KV ---
+    if (url.pathname === '/api/config' && request.method === 'POST') {
+      try {
+        const body = await request.json();
+        if (body.port) await env.accounts_kv.put('LOCAL_PORT', body.port.toString());
+        if (body.token) await env.accounts_kv.put('AUTH_TOKEN', body.token);
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      } catch(e) {
+        return new Response(JSON.stringify({ error: e.message }), { 
+          status: 500, headers: { "Access-Control-Allow-Origin": "*" } 
+        });
+      }
+    }
+
+    // Handle CORS preflight untuk Web UI
+    if (request.method === 'OPTIONS') {
+      return new Response(null, {
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type"
+        }
+      });
+    }
+
+    // Ambil Config dari KV accounts_kv
+    const AUTH_TOKEN = (await env.accounts_kv?.get('AUTH_TOKEN')) || "default_token";
+    const LOCAL_PORT = (await env.accounts_kv?.get('LOCAL_PORT')) || "8080";
+
+    // --- 1. Endpoint instalasi otomatis untuk Termux ---
     if (url.pathname === '/setup') {
       const script = \`#!/bin/bash
 echo -e "\\\\e[1;34m[+]===============================================[+]\\\\e[0m"
@@ -36,19 +100,18 @@ echo -e "\\\\e[1;34m |      ONTIME TERMUX TUNNEL INSTALLER           |\\\\e[0m"
 echo -e "\\\\e[1;34m[+]===============================================[+]\\\\e[0m"
 echo -e "\\\\e[1;32m[+] Menyiapkan Tunnel Localhost ke Cloudflare Worker...\\\\e[0m"
 
-echo -e "\\\\e[1;33m[*] Mengupdate package dan menginstall Node.js (ini mungkin butuh beberapa menit)...\\\\e[0m"
-pkg update -y
-pkg install nodejs -y
+echo -e "\\\\e[1;33m[*] Menginstall Node.js...\\\\e[0m"
+pkg install nodejs -y > /dev/null 2>&1
 
 mkdir -p ~/.termux_tunnel
 cd ~/.termux_tunnel
 
 if [ ! -f package.json ]; then
-  npm init -y
+  npm init -y > /dev/null 2>&1
 fi
 
 echo -e "\\\\e[1;33m[*] Menginstall modul WebSocket...\\\\e[0m"
-npm install ws
+npm install ws > /dev/null 2>&1
 
 cat << 'EOF' > ~/.termux_tunnel/tunnel.js
 const WebSocket = require('ws');
@@ -130,7 +193,6 @@ function connect() {
 connect();
 EOF
 
-# Menambahkan ke .bashrc agar otomatis jalan saat Termux dibuka
 if ! grep -q ".termux_tunnel/tunnel.js" ~/.bashrc; then
   echo "cd ~/.termux_tunnel && node tunnel.js &" >> ~/.bashrc
   echo -e "\\\\e[1;32m[+] Berhasil ditambahkan ke .bashrc\\\\e[0m"
@@ -142,12 +204,13 @@ cd ~/.termux_tunnel && node tunnel.js
       return new Response(script, {
         headers: { 
           "Content-Type": "text/plain;charset=UTF-8",
-          "Cache-Control": "no-store"
+          "Cache-Control": "no-store",
+          "Access-Control-Allow-Origin": "*"
         },
       });
     }
 
-    // 2. Endpoint WebSocket untuk Termux Tunnel Client
+    // --- 2. Endpoint WebSocket untuk Termux Tunnel Client ---
     if (url.pathname === '/_ws') {
       if (request.headers.get("Authorization") !== \`Bearer \${AUTH_TOKEN}\`) {
         return new Response("Unauthorized", { status: 401 });
@@ -178,10 +241,10 @@ cd ~/.termux_tunnel && node tunnel.js
       return new Response(null, { status: 101, webSocket: client });
     }
 
-    // 3. Routing Request Publik ke Localhost Termux
+    // --- 3. Routing Request Publik ke Localhost Termux ---
     if (!tunnelWs) {
       return new Response(
-        "<h1>502 Bad Gateway</h1><p>Tunnel dari Termux belum terhubung, atau terhubung ke node Cloudflare yang berbeda.</p><p>Pastikan script di Termux sedang berjalan, dan Worker URL sudah benar.</p>", 
+        "<h1>502 Bad Gateway</h1><p>Tunnel dari Termux belum terhubung.</p><p>Pastikan script Termux berjalan dan KV accounts_kv sudah terhubung.</p>", 
         { status: 502, headers: { "Content-Type": "text/html" } }
       );
     }
@@ -267,7 +330,7 @@ cd ~/.termux_tunnel && node tunnel.js
             <span className="text-xs font-mono uppercase tracking-widest text-emerald-400 hidden sm:inline-block">Bridge Ready</span>
           </div>
           <div className="h-8 w-px bg-slate-800 hidden sm:block"></div>
-          <div className="text-xs font-mono text-slate-400 hidden md:block">MODE: REVERSE PROXY</div>
+          <div className="text-xs font-mono text-slate-400 hidden md:block">KV ID: fc7e78f9...</div>
         </div>
       </header>
 
@@ -278,11 +341,25 @@ cd ~/.termux_tunnel && node tunnel.js
           <section className="bg-slate-900 border border-slate-800 rounded-lg p-5 flex flex-col gap-4">
             <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
               <Globe className="w-4 h-4" />
-              Tunnel Configuration
+              KV Tunnel Configuration
             </h2>
             <div className="flex flex-col gap-4">
+              <div className="pb-2 border-b border-slate-800">
+                <label className="block text-[10px] text-slate-500 uppercase mb-1 font-mono">1. Worker URL Anda</label>
+                <div className="flex items-center bg-slate-950 border border-slate-700 rounded overflow-hidden focus-within:border-emerald-500 transition-colors">
+                  <span className="px-3 text-slate-500 font-mono border-r border-slate-700"><Link2 className="w-4 h-4" /></span>
+                  <input
+                    type="text"
+                    value={workerUrl}
+                    onChange={(e) => setWorkerUrl(e.target.value)}
+                    className="w-full bg-transparent p-2 font-mono text-sm text-emerald-400 outline-none"
+                    placeholder="https://ontime.ahem7553.workers.dev"
+                  />
+                </div>
+              </div>
+              
               <div>
-                <label className="block text-[10px] text-slate-500 uppercase mb-1 font-mono">Localhost Port (Termux)</label>
+                <label className="block text-[10px] text-slate-500 uppercase mb-1 font-mono">2. Localhost Port (Termux)</label>
                 <div className="flex items-center bg-slate-950 border border-slate-700 rounded overflow-hidden">
                   <span className="px-3 text-slate-500 font-mono text-sm border-r border-slate-700">PORT</span>
                   <input
@@ -295,7 +372,7 @@ cd ~/.termux_tunnel && node tunnel.js
                 </div>
               </div>
               <div>
-                <label className="block text-[10px] text-slate-500 uppercase mb-1 font-mono">Security Token</label>
+                <label className="block text-[10px] text-slate-500 uppercase mb-1 font-mono">3. Security Token</label>
                 <div className="flex items-center bg-slate-950 border border-slate-700 rounded overflow-hidden">
                   <span className="px-3 text-slate-500 font-mono border-r border-slate-700"><Shield className="w-4 h-4" /></span>
                   <input
@@ -307,32 +384,39 @@ cd ~/.termux_tunnel && node tunnel.js
                   />
                 </div>
               </div>
-              <div className="pt-2 border-t border-slate-800">
-                <label className="block text-[10px] text-slate-500 uppercase mb-1 font-mono">1. Deploy & Paste Worker URL</label>
-                <div className="flex items-center bg-slate-950 border border-slate-700 rounded overflow-hidden">
-                  <span className="px-3 text-slate-500 font-mono border-r border-slate-700"><Link2 className="w-4 h-4" /></span>
-                  <input
-                    type="text"
-                    value={workerUrl}
-                    onChange={(e) => setWorkerUrl(e.target.value)}
-                    className="w-full bg-transparent p-2 font-mono text-sm text-emerald-400 outline-none"
-                    placeholder="https://my-tunnel.workers.dev"
-                  />
-                </div>
-                <p className="text-[10px] text-slate-500 leading-relaxed mt-2">
-                  Masukkan URL Worker Cloudflare yang telah di-deploy untuk men-generate script instalasi Termux di bawah ini.
+
+              <button
+                onClick={saveConfigToKV}
+                disabled={isSaving || !workerUrl}
+                className="mt-2 flex items-center justify-center gap-2 w-full bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 font-bold py-3 rounded text-sm transition-colors uppercase tracking-tighter shadow-lg shadow-emerald-900/20"
+              >
+                {isSaving ? (
+                  <span className="animate-pulse">Menyimpan ke KV...</span>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4" />
+                    Simpan & Generate
+                  </>
+                )}
+              </button>
+              
+              {saveStatus === 'success' && (
+                <p className="text-xs text-emerald-400 font-mono mt-1 text-center bg-emerald-900/20 p-2 rounded">
+                  ✅ Config berhasil disimpan di accounts_kv!
                 </p>
-              </div>
+              )}
+              {saveStatus === 'error' && (
+                <p className="text-xs text-red-400 font-mono mt-1 text-center bg-red-900/20 p-2 rounded">
+                  ❌ {errorMessage}
+                </p>
+              )}
             </div>
-            <p className="text-[10px] text-slate-500 leading-relaxed mt-2">
-              Konfigurasi ini akan menghasilkan Worker yang mem-forward trafik publik ke port <b>{localPort}</b> di dalam Termux Anda melalui koneksi WebSocket yang aman.
-            </p>
           </section>
 
           <section className="bg-slate-900 border border-slate-800 rounded-lg p-5 flex flex-col gap-3 shrink-0">
             <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
               <Smartphone className="w-4 h-4" />
-              2. Auto-Install di Termux
+              4. Auto-Install di Termux
             </h2>
             <div className="bg-slate-950 rounded-md p-4 font-mono text-xs border border-emerald-500/30 leading-relaxed overflow-hidden relative group">
               <span className="text-emerald-500 block break-all pr-8">
@@ -340,14 +424,15 @@ cd ~/.termux_tunnel && node tunnel.js
               </span>
               <button
                 onClick={() => handleCopy(installCmd, setCopiedTermux)}
-                className="absolute right-2 top-2 w-7 h-7 flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-300 rounded transition-colors"
+                disabled={saveStatus !== 'success'}
+                className="absolute right-2 top-2 w-7 h-7 flex items-center justify-center bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 rounded transition-colors"
                 title="Copy Termux Command"
               >
                 {copiedTermux ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
               </button>
             </div>
             <p className="text-[10px] text-slate-500 italic">
-              Copy perintah di atas dan jalankan di Termux. Script akan otomatis masuk ke .bashrc.
+              Setelah konfigurasi disimpan (tombol hijau), copy perintah di atas dan jalankan di Termux. URL dan Token sudah terhubung otomatis.
             </p>
           </section>
         </div>
@@ -362,8 +447,15 @@ cd ~/.termux_tunnel && node tunnel.js
             </div>
             <div className="flex items-center gap-3">
               <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <Server className="w-3.5 h-3.5" /> _worker.js
+                <Server className="w-3.5 h-3.5" /> _worker.js & wrangler.toml
               </span>
+              <button
+                onClick={() => handleCopy(wranglerToml, setCopiedToml)}
+                className="flex items-center gap-1.5 text-[10px] font-mono bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1 rounded transition-colors uppercase tracking-widest"
+              >
+                {copiedToml ? <CheckCircle2 className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                {copiedToml ? 'Copied' : 'Copy TOML'}
+              </button>
               <button
                 onClick={() => handleCopy(workerCode, setCopiedWorker)}
                 className="flex items-center gap-1.5 text-[10px] font-mono bg-slate-800 hover:bg-emerald-900/50 text-emerald-400 border border-emerald-500/30 px-3 py-1 rounded transition-colors uppercase tracking-widest"
@@ -373,10 +465,19 @@ cd ~/.termux_tunnel && node tunnel.js
               </button>
             </div>
           </div>
-          <div className="flex-1 p-4 font-mono text-xs leading-relaxed overflow-y-auto bg-slate-950">
-            <pre className="text-slate-300 whitespace-pre-wrap break-all">
-              <code>{workerCode}</code>
-            </pre>
+          <div className="flex-1 p-4 font-mono text-[11px] md:text-xs leading-relaxed overflow-y-auto bg-slate-950 flex flex-col gap-4">
+            <div>
+              <p className="text-slate-400 mb-2 border-b border-slate-800 pb-1 uppercase tracking-widest">wrangler.toml</p>
+              <pre className="text-emerald-300 whitespace-pre-wrap break-all bg-slate-900 p-3 rounded">
+                <code>{wranglerToml}</code>
+              </pre>
+            </div>
+            <div>
+              <p className="text-slate-400 mb-2 border-b border-slate-800 pb-1 uppercase tracking-widest">src/index.js</p>
+              <pre className="text-slate-300 whitespace-pre-wrap break-all">
+                <code>{workerCode}</code>
+              </pre>
+            </div>
           </div>
           
           {/* Stats Row */}
@@ -390,8 +491,8 @@ cd ~/.termux_tunnel && node tunnel.js
               <span className="text-xs md:text-sm font-bold text-white">WSS / HTTP</span>
             </div>
             <div className="flex flex-col items-center justify-center">
-              <span className="text-[9px] text-slate-500 uppercase">Auth Mode</span>
-              <span className="text-xs md:text-sm font-bold text-white">Bearer Token</span>
+              <span className="text-[9px] text-slate-500 uppercase">KV Namespace</span>
+              <span className="text-xs md:text-sm font-bold text-white">accounts_kv</span>
             </div>
             <div className="flex flex-col items-center justify-center">
               <span className="text-[9px] text-slate-500 uppercase">Auto Start</span>
@@ -408,7 +509,7 @@ cd ~/.termux_tunnel && node tunnel.js
           <span>Node: cf-edge-sea-09</span>
         </div>
         <div className="flex gap-4 items-center w-full justify-between md:w-auto">
-          <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-slate-600"></span> WebSocket: Supported</span>
+          <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span> KV Data Linked</span>
           <span className="text-slate-400">© 2024 ONTIME LABS</span>
         </div>
       </footer>
