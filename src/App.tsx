@@ -19,35 +19,122 @@ export default function App() {
   const cleanUrl = displayUrl.replace(/\/$/, '');
   const installCmd = `curl -sL ${cleanUrl}/setup | bash`;
 
-  const workerCode = `export default {
+  const workerCode = `let tunnelWs = null;
+const pendingRequests = new Map();
+
+export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const AUTH_TOKEN = "${authToken}";
-    const LOCAL_PORT = "${localPort}";
+    const LOCAL_PORT = ${localPort};
     
     // 1. Endpoint instalasi otomatis untuk Termux
     if (url.pathname === '/setup') {
       const script = \`#!/bin/bash
+echo -e "\\\\e[1;34m[+]===============================================[+]\\\\e[0m"
+echo -e "\\\\e[1;34m |      ONTIME TERMUX TUNNEL INSTALLER           |\\\\e[0m"
+echo -e "\\\\e[1;34m[+]===============================================[+]\\\\e[0m"
 echo -e "\\\\e[1;32m[+] Menyiapkan Tunnel Localhost ke Cloudflare Worker...\\\\e[0m"
-pkg update -y && pkg install nodejs -y > /dev/null 2>&1
 
-# Membuat script jembatan (bridge) Node.js
-cat << 'EOF' > ~/.termux_tunnel.js
+pkg update -y > /dev/null 2>&1
+pkg install nodejs -y > /dev/null 2>&1
+
+mkdir -p ~/.termux_tunnel
+cd ~/.termux_tunnel
+
+if [ ! -f package.json ]; then
+  npm init -y > /dev/null 2>&1
+fi
+npm install ws > /dev/null 2>&1
+
+cat << 'EOF' > ~/.termux_tunnel/tunnel.js
+const WebSocket = require('ws');
 const http = require('http');
-// Script jembatan WebSocket ke HTTP (Simulasi)
-console.log("\\\\e[1;36m[i] Tunnel aktif: Menghubungkan localhost:\${LOCAL_PORT} ke Cloudflare Worker...\\\\e[0m");
-// Di sini logika WebSocket client (ws) akan menghubungkan Termux
-// ke wss://\${url.host}/_ws dan meneruskan traffic ke localhost:\${LOCAL_PORT}
+
+const WORKER_URL = '\${url.origin}';
+const WS_URL = WORKER_URL.replace('http', 'ws') + '/_ws';
+const AUTH_TOKEN = '\${AUTH_TOKEN}';
+const LOCAL_PORT = \${LOCAL_PORT};
+
+function connect() {
+  console.log('[*] Menghubungkan ke ' + WS_URL);
+  const ws = new WebSocket(WS_URL, {
+    headers: { 'Authorization': 'Bearer ' + AUTH_TOKEN }
+  });
+
+  ws.on('open', () => {
+    console.log('\\\\x1b[32m[+] Tunnel terhubung! Publik URL Anda:\\\\x1b[0m ' + WORKER_URL);
+    console.log('\\\\x1b[36m[*] Meneruskan traffic publik ke localhost:\\\\x1b[0m' + LOCAL_PORT);
+  });
+
+  ws.on('message', async (data) => {
+    try {
+      const reqData = JSON.parse(data.toString());
+      
+      const options = {
+        hostname: '127.0.0.1',
+        port: LOCAL_PORT,
+        path: new URL(reqData.url).pathname + new URL(reqData.url).search,
+        method: reqData.method,
+        headers: reqData.headers
+      };
+
+      delete options.headers['host']; // Prevent host conflict
+
+      const proxyReq = http.request(options, (proxyRes) => {
+        let chunks = [];
+        proxyRes.on('data', chunk => chunks.push(chunk));
+        proxyRes.on('end', () => {
+          const bodyBuffer = Buffer.concat(chunks);
+          ws.send(JSON.stringify({
+            id: reqData.id,
+            status: proxyRes.statusCode,
+            headers: proxyRes.headers,
+            body: bodyBuffer.toString('base64')
+          }));
+        });
+      });
+
+      proxyReq.on('error', (err) => {
+        ws.send(JSON.stringify({
+          id: reqData.id,
+          status: 502,
+          headers: { 'Content-Type': 'text/plain' },
+          body: Buffer.from('Bad Gateway: Local server error - ' + err.message).toString('base64')
+        }));
+      });
+
+      if (reqData.body) {
+        proxyReq.write(Buffer.from(reqData.body, 'base64'));
+      }
+      proxyReq.end();
+      
+    } catch(e) {
+      console.error('[-] Error handling message:', e.message);
+    }
+  });
+
+  ws.on('close', () => {
+    console.log('[-] Koneksi terputus. Mencoba menyambung kembali dalam 5 detik...');
+    setTimeout(connect, 5000);
+  });
+  
+  ws.on('error', (err) => {
+    console.error('[!] WebSocket Error:', err.message);
+  });
+}
+
+connect();
 EOF
 
 # Menambahkan ke .bashrc agar otomatis jalan saat Termux dibuka
-if ! grep -q ".termux_tunnel.js" ~/.bashrc; then
-  echo "node ~/.termux_tunnel.js &" >> ~/.bashrc
+if ! grep -q ".termux_tunnel/tunnel.js" ~/.bashrc; then
+  echo "cd ~/.termux_tunnel && node tunnel.js &" >> ~/.bashrc
   echo -e "\\\\e[1;32m[+] Berhasil ditambahkan ke .bashrc\\\\e[0m"
 fi
 
-# Jalankan sekarang
-node ~/.termux_tunnel.js
+echo -e "\\\\e[1;32m[+] Instalasi Selesai! Menjalankan tunnel sekarang...\\\\e[0m"
+cd ~/.termux_tunnel && node tunnel.js
 \`;
       return new Response(script, {
         headers: { 
@@ -62,22 +149,94 @@ node ~/.termux_tunnel.js
       if (request.headers.get("Authorization") !== \`Bearer \${AUTH_TOKEN}\`) {
         return new Response("Unauthorized", { status: 401 });
       }
-      if (request.headers.get("Upgrade") === "websocket") {
-        const [client, server] = Object.values(new WebSocketPair());
-        server.accept();
-        // Worker akan menyimpan koneksi WebSocket ini untuk meneruskan request publik
-        return new Response(null, { status: 101, webSocket: client });
+      if (request.headers.get("Upgrade") !== "websocket") {
+        return new Response("Expected WebSocket", { status: 426 });
       }
-      return new Response("Expected WebSocket", { status: 426 });
+
+      const webSocketPair = new WebSocketPair();
+      const client = webSocketPair[0];
+      const server = webSocketPair[1];
+      server.accept();
+      
+      tunnelWs = server;
+      server.addEventListener('message', event => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.id && pendingRequests.has(data.id)) {
+            pendingRequests.get(data.id)(data);
+          }
+        } catch (e) {}
+      });
+      
+      server.addEventListener('close', () => {
+        if (tunnelWs === server) tunnelWs = null;
+      });
+
+      return new Response(null, { status: 101, webSocket: client });
     }
 
     // 3. Routing Request Publik ke Localhost Termux
-    // Logika: Menerima request HTTP dari user, mengirimkannya ke Termux via WebSocket,
-    // lalu mengembalikan response dari Termux ke user.
-    return new Response(
-      "<h1>Worker Bridge Aktif</h1><p>Menunggu koneksi tunnel dari Termux...</p>", 
-      { status: 503, headers: { "Content-Type": "text/html" } }
-    );
+    if (!tunnelWs) {
+      return new Response(
+        "<h1>502 Bad Gateway</h1><p>Tunnel dari Termux belum terhubung, atau terhubung ke node Cloudflare yang berbeda.</p><p>Pastikan script di Termux sedang berjalan, dan Worker URL sudah benar.</p>", 
+        { status: 502, headers: { "Content-Type": "text/html" } }
+      );
+    }
+
+    const reqId = crypto.randomUUID();
+    let reqBodyBase64 = null;
+    
+    if (request.body) {
+      const buffer = await request.arrayBuffer();
+      let binary = '';
+      const bytes = new Uint8Array(buffer);
+      for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      reqBodyBase64 = btoa(binary);
+    }
+
+    const reqData = {
+      id: reqId,
+      method: request.method,
+      url: request.url,
+      headers: Object.fromEntries(request.headers.entries()),
+      body: reqBodyBase64
+    };
+
+    const responsePromise = new Promise(resolve => {
+      pendingRequests.set(reqId, resolve);
+      setTimeout(() => {
+        if (pendingRequests.has(reqId)) {
+          pendingRequests.delete(reqId);
+          resolve({ status: 504, headers: { "Content-Type": "text/plain" }, body: btoa("Gateway Timeout: Termux did not respond in 30s.") });
+        }
+      }, 30000);
+    });
+
+    try {
+      tunnelWs.send(JSON.stringify(reqData));
+    } catch (e) {
+      return new Response("Failed to send request to tunnel", { status: 502 });
+    }
+
+    const resData = await responsePromise;
+    pendingRequests.delete(reqId);
+
+    let resBody = null;
+    if (resData.body) {
+      const binaryString = atob(resData.body);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      resBody = bytes;
+    }
+
+    return new Response(resBody, {
+      status: resData.status,
+      headers: resData.headers
+    });
   },
 };`;
 
