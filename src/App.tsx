@@ -175,10 +175,17 @@ function connect() {
         proxyRes.on('data', chunk => chunks.push(chunk));
         proxyRes.on('end', () => {
           const bodyBuffer = Buffer.concat(chunks);
+          
+          // Hapus header yang dapat menyebabkan error di browser / Cloudflare
+          const cleanHeaders = { ...proxyRes.headers };
+          delete cleanHeaders['transfer-encoding'];
+          delete cleanHeaders['connection'];
+          delete cleanHeaders['keep-alive'];
+          
           ws.send(JSON.stringify({
             id: reqData.id,
             status: proxyRes.statusCode,
-            headers: proxyRes.headers,
+            headers: cleanHeaders,
             body: bodyBuffer.toString('base64')
           }));
         });
@@ -222,6 +229,7 @@ if ! grep -q ".termux_tunnel/tunnel.js" ~/.bashrc; then
 fi
 
 echo -e "\\\\e[1;32m[+] Instalasi Selesai! Menjalankan tunnel sekarang...\\\\e[0m"
+pkill -f "node tunnel.js" > /dev/null 2>&1 || true
 cd ~/.termux_tunnel && node tunnel.js
 \`;
       return new Response(script, {
