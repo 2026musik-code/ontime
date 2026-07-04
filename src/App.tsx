@@ -5,6 +5,7 @@ export default function App() {
   const [localPort, setLocalPort] = useState('8080');
   const [authToken, setAuthToken] = useState(Math.random().toString(36).substring(2, 15));
   const [workerUrl, setWorkerUrl] = useState('');
+  const [kvId, setKvId] = useState('fc7e78f9ecec4a4b95fbf4ab82e1e057');
   const [copiedWorker, setCopiedWorker] = useState(false);
   const [copiedTermux, setCopiedTermux] = useState(false);
   const [copiedToml, setCopiedToml] = useState(false);
@@ -52,7 +53,7 @@ compatibility_date = "2024-03-20"
 
 [[kv_namespaces]]
 binding = "accounts_kv"
-id = "fc7e78f9ecec4a4b95fbf4ab82e1e057"`;
+id = "${kvId || "YOUR_KV_NAMESPACE_ID"}"`;
 
   const workerCode = `let tunnelWs = null;
 const pendingRequests = new Map();
@@ -330,7 +331,7 @@ cd ~/.termux_tunnel && node tunnel.js
             <span className="text-xs font-mono uppercase tracking-widest text-emerald-400 hidden sm:inline-block">Bridge Ready</span>
           </div>
           <div className="h-8 w-px bg-slate-800 hidden sm:block"></div>
-          <div className="text-xs font-mono text-slate-400 hidden md:block">KV ID: fc7e78f9...</div>
+          <div className="text-xs font-mono text-slate-400 hidden md:block">KV ID: {kvId.substring(0, 8)}...</div>
         </div>
       </header>
 
@@ -354,6 +355,20 @@ cd ~/.termux_tunnel && node tunnel.js
                     onChange={(e) => setWorkerUrl(e.target.value)}
                     className="w-full bg-transparent p-2 font-mono text-sm text-emerald-400 outline-none"
                     placeholder="https://ontime.ahem7553.workers.dev"
+                  />
+                </div>
+              </div>
+              
+              <div>
+                <label className="block text-[10px] text-slate-500 uppercase mb-1 font-mono">KV Namespace ID</label>
+                <div className="flex items-center bg-slate-950 border border-slate-700 rounded overflow-hidden">
+                  <span className="px-3 text-slate-500 font-mono text-sm border-r border-slate-700">ID</span>
+                  <input
+                    type="text"
+                    value={kvId}
+                    onChange={(e) => setKvId(e.target.value)}
+                    className="w-full bg-transparent p-2 font-mono text-sm text-emerald-400 outline-none"
+                    placeholder="fc7e78f9ecec4a4b95fbf4ab82e1e057"
                   />
                 </div>
               </div>

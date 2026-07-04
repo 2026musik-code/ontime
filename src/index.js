@@ -193,22 +193,10 @@ cd ~/.termux_tunnel && node tunnel.js
     // Let's just return env.ASSETS.fetch(request) if they request the root or index.html,
     // so they can configure the app!
     
-    // Handle static assets for the React UI
-    if (url.pathname.startsWith('/assets/') || url.pathname === '/vite.svg' || url.pathname === '/favicon.ico') {
-      return env.ASSETS.fetch(request);
-    }
-    
-    // Serve React UI explicitly on /config, or on root if tunnel is not connected
-    if (url.pathname === '/config' || (url.pathname === '/' && !tunnelWs)) {
-      // Modify request to fetch index.html
-      const uiRequest = new Request(new URL('/index.html', request.url), request);
-      return env.ASSETS.fetch(uiRequest);
-    }
-
     // --- 3. Routing Request Publik ke Localhost Termux ---
     if (!tunnelWs) {
       return new Response(
-        "<h1>502 Bad Gateway</h1><p>Tunnel dari Termux belum terhubung.</p><p>Akses <a href='/config'>/config</a> untuk mengatur tunnel.</p>", 
+        "<h1>502 Bad Gateway</h1><p>Tunnel dari Termux belum terhubung.</p><p>Pastikan script Termux berjalan dan KV accounts_kv sudah terhubung.</p>", 
         { status: 502, headers: { "Content-Type": "text/html" } }
       );
     }
