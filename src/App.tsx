@@ -226,6 +226,14 @@ cd ~/.termux_tunnel && node tunnel.js
       server.accept();
       
       tunnelWs = server;
+      
+      // Simpan status online ke KV
+      ctx.waitUntil(env.accounts_kv.put('TERMUX_STATUS', JSON.stringify({
+        status: 'online',
+        ip: request.headers.get('cf-connecting-ip') || 'unknown',
+        lastPing: Date.now()
+      })));
+
       server.addEventListener('message', event => {
         try {
           const data = JSON.parse(event.data);
@@ -236,18 +244,94 @@ cd ~/.termux_tunnel && node tunnel.js
       });
       
       server.addEventListener('close', () => {
-        if (tunnelWs === server) tunnelWs = null;
+        if (tunnelWs === server) {
+          tunnelWs = null;
+          // Simpan status offline ke KV
+          ctx.waitUntil(env.accounts_kv.put('TERMUX_STATUS', JSON.stringify({
+            status: 'offline',
+            lastPing: Date.now()
+          })));
+        }
       });
 
       return new Response(null, { status: 101, webSocket: client });
     }
 
     // --- 3. Routing Request Publik ke Localhost Termux ---
-    if (!tunnelWs) {
-      return new Response(
-        "<h1>502 Bad Gateway</h1><p>Tunnel dari Termux belum terhubung.</p><p>Pastikan script Termux berjalan dan KV accounts_kv sudah terhubung.</p>", 
-        { status: 502, headers: { "Content-Type": "text/html" } }
-      );
+    if (url.pathname === '/_status' || !tunnelWs) {
+      let statusData = null;
+      try {
+        statusData = await env.accounts_kv.get('TERMUX_STATUS', { type: 'json' });
+      } catch(e) {}
+      
+      const lastSeen = statusData && statusData.lastPing ? new Date(statusData.lastPing).toLocaleString('id-ID') : '-';
+      const isOnlineElsewhere = statusData && statusData.status === 'online';
+      const isOnlineHere = tunnelWs !== null;
+      
+      const isOnline = isOnlineHere || isOnlineElsewhere;
+
+      const html = \`<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tunnel Status - Ontime</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #020617; color: #f8fafc; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+    .card { background: #0f172a; border: 1px solid #1e293b; padding: 30px; border-radius: 12px; max-width: 450px; width: 90%; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); }
+    h1 { margin-top: 0; font-size: 1.5rem; }
+    .badge { display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 999px; font-weight: 600; font-size: 0.875rem; margin-bottom: 20px; }
+    .offline { background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.2); }
+    .warning { background: rgba(234, 179, 8, 0.1); color: #eab308; border: 1px solid rgba(234, 179, 8, 0.2); }
+    .online { background: rgba(16, 185, 129, 0.1); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.2); }
+    p { color: #94a3b8; font-size: 0.9rem; line-height: 1.6; }
+    .footer { margin-top: 25px; padding-top: 20px; border-top: 1px solid #1e293b; font-size: 0.8rem; color: #64748b; }
+    ul { color: #94a3b8; font-size: 0.9rem; padding-left: 20px; }
+    li { margin-bottom: 8px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; }
+    .dot-red { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+    .dot-yellow { background: #eab308; box-shadow: 0 0 8px #eab308; }
+    .dot-green { background: #10b981; box-shadow: 0 0 8px #10b981; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>🚇 Status Web Tunnel</h1>
+    
+    \${isOnlineHere ? 
+      \`<div class="badge online"><div class="dot dot-green"></div> ONLINE & TERHUBUNG</div>
+       <p>Tunnel Termux sedang aktif dan terhubung ke node Cloudflare ini.</p>
+       <p>Anda dapat mengakses server localhost Termux Anda melalui URL Worker ini (kecuali path <code>/_status</code>).</p>\`
+    : isOnlineElsewhere ? 
+      \`<div class="badge warning"><div class="dot dot-yellow"></div> ONLINE (NODE LAIN)</div>
+       <p>Termux terhubung, tetapi ke server edge Cloudflare yang berbeda.</p>
+       <p><b>Tips:</b> Karena Cloudflare memiliki banyak server di seluruh dunia, request Anda mungkin masuk ke server Singapura, sedangkan Termux terhubung ke server Jakarta.</p>
+       <ul>
+         <li>Coba refresh (F5) halaman ini beberapa kali.</li>
+         <li>Gunakan VPN agar request Anda diarahkan ke server yang sama.</li>
+       </ul>\` 
+      : 
+      \`<div class="badge offline"><div class="dot dot-red"></div> OFFLINE / TERPUTUS</div>
+       <p>Tidak ada koneksi aktif dari Termux saat ini.</p>
+       <p><b>Solusi:</b></p>
+       <ul>
+         <li>Buka Termux Anda.</li>
+         <li>Jalankan perintah instalasi yang ada di Dashboard Web Anda.</li>
+         <li>Pastikan aplikasi server localhost Anda (port \${LOCAL_PORT}) sedang berjalan.</li>
+       </ul>\`
+    }
+
+    <div class="footer">
+      <div><b>KV Data Terakhir:</b></div>
+      <div>Status: \${statusData?.status || 'Belum ada'}</div>
+      <div>IP Termux: \${statusData?.ip || '-'}</div>
+      <div>Waktu: \${lastSeen}</div>
+      \${!isOnlineHere ? \`<div style="margin-top: 10px;"><a href="/_status" style="color: #38bdf8; text-decoration: none;">🔄 Refresh Status</a></div>\` : ''}
+    </div>
+  </div>
+</body>
+</html>\`;
+      return new Response(html, { status: isOnlineHere ? 200 : 502, headers: { "Content-Type": "text/html" } });
     }
 
     const reqId = crypto.randomUUID();
