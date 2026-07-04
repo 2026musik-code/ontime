@@ -42,12 +42,18 @@ export default function App() {
       });
       
       if (!response.ok) {
-        let errDetails = 'Make sure worker is deployed and KV is bound in wrangler.toml.';
+        let errDetails = 'Pastikan worker sudah di-deploy dan KV accounts_kv sudah di-bind.';
         try {
           const errData = await response.json();
-          if (errData.error) errDetails = `Server Error: ${errData.error}`;
+          if (errData.error) {
+            if (errData.error.includes("Cannot read properties of undefined")) {
+              errDetails = "KV 'accounts_kv' BELUM DI-BIND! Silakan ikuti instruksi Setup KV di atas.";
+            } else {
+              errDetails = `Server Error: ${errData.error}`;
+            }
+          }
         } catch(e) {}
-        throw new Error(`Failed to save. ${errDetails}`);
+        throw new Error(`Gagal menyimpan: ${errDetails}`);
       }
       
       setSaveStatus('success');
@@ -126,9 +132,9 @@ fi
 echo -e "\\\\e[1;33m[*] Menginstall modul WebSocket & http-server...\\\\e[0m"
 npm install ws http-server > /dev/null 2>&1
 
-echo -e "\\\\e[1;33m[*] Memulai Web Server lokal di port ${LOCAL_PORT} (menampilkan file)...\\\\e[0m"
+echo -e "\\\\e[1;33m[*] Memulai Web Server lokal di port \${LOCAL_PORT} (menampilkan file)...\\\\e[0m"
 pkill -f "http-server" > /dev/null 2>&1 || true
-npx http-server ~ -p ${LOCAL_PORT} --cors -c-1 -s &
+npx http-server ~ -p \${LOCAL_PORT} --cors -c-1 -s &
 
 cat << 'EOF' > ~/.termux_tunnel/tunnel.js
 const WebSocket = require('ws');
@@ -446,13 +452,17 @@ cd ~/.termux_tunnel && node tunnel.js
               1. Setup KV (Wajib!)
             </h2>
             <p className="text-[11px] text-slate-400 leading-relaxed">
-              Sebelum deploy Worker, buka terminal Anda dan buat namespace KV:
+              Worker membutuhkan KV untuk menyimpan konfigurasi. Jika Anda mendeploy via <b>Wrangler</b>:
             </p>
-            <div className="bg-slate-950 p-3 rounded border border-slate-800 text-sky-400 font-mono text-[11px] select-all">
+            <div className="bg-slate-950 p-2 rounded border border-slate-800 text-sky-400 font-mono text-[11px] select-all">
               npx wrangler kv:namespace create accounts_kv
             </div>
-            <p className="text-[10px] text-slate-500 italic">
-              Copy <b>ID</b> yang dihasilkan dan masukkan ke form di bawah ini.
+            <p className="text-[11px] text-slate-400 leading-relaxed mt-2">
+              Jika menggunakan <b>Cloudflare Dashboard</b> (tanpa wrangler):<br/>
+              1. Buka halaman Worker Anda &gt; <b>Settings</b>.<br/>
+              2. Scroll ke <b>Bindings</b> &gt; <b>KV Namespace Bindings</b> &gt; Add.<br/>
+              3. Variable name: <code className="text-emerald-400">accounts_kv</code>.<br/>
+              4. Pilih/buat KV namespace, lalu <b>Deploy</b> ulang.
             </p>
           </section>
 
@@ -517,20 +527,30 @@ cd ~/.termux_tunnel && node tunnel.js
                 </div>
               </div>
 
-              <button
-                onClick={saveConfigToKV}
-                disabled={isSaving || !workerUrl}
-                className="mt-2 flex items-center justify-center gap-2 w-full bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 font-bold py-3 rounded text-sm transition-colors uppercase tracking-tighter shadow-lg shadow-emerald-900/20"
-              >
-                {isSaving ? (
-                  <span className="animate-pulse">Menyimpan ke KV...</span>
-                ) : (
-                  <>
-                    <Save className="w-4 h-4" />
-                    Simpan & Generate
-                  </>
-                )}
-              </button>
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={saveConfigToKV}
+                  disabled={isSaving || !workerUrl}
+                  className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 font-bold py-3 rounded text-sm transition-colors uppercase tracking-tighter shadow-lg shadow-emerald-900/20"
+                >
+                  {isSaving ? (
+                    <span className="animate-pulse">Menyimpan ke KV...</span>
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4" />
+                      Simpan & Generate
+                    </>
+                  )}
+                </button>
+                <a 
+                  href={`${cleanUrl}/_status`}
+                  target="_blank"
+                  className={`flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-3 px-4 rounded text-sm transition-colors uppercase tracking-tighter shadow-lg ${!workerUrl || workerUrl.includes('YOUR_WORKER') ? 'opacity-50 pointer-events-none' : ''}`}
+                >
+                  <Globe className="w-4 h-4" />
+                  Status
+                </a>
+              </div>
               
               {saveStatus === 'success' && (
                 <p className="text-xs text-emerald-400 font-mono mt-1 text-center bg-emerald-900/20 p-2 rounded">
