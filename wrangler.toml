@@ -8,4 +8,4 @@ directory = "dist"
 # Ganti "MASUKKAN_ID_KV_ANDA_DISINI" dengan ID asli dari KV Anda.
 [[kv_namespaces]]
 binding = "accounts_kv"
-id = "MASUKKAN_ID_KV_ANDA_DISINI"
+id = "fc7e78f9ecec4a4b95fbf4ab82e1e057"
