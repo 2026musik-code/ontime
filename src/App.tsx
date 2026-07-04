@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Terminal, Copy, CheckCircle2, Server, Smartphone, Code2 } from 'lucide-react';
 
 export default function App() {
@@ -8,6 +8,12 @@ export default function App() {
 
   const [copiedWorker, setCopiedWorker] = useState(false);
   const [copiedTermux, setCopiedTermux] = useState(false);
+  const [originUrl, setOriginUrl] = useState('https://YOUR_WORKER_URL.workers.dev');
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setOriginUrl(window.location.origin);
+    }
+  }, []);
 
   const workerCode = `export default {
   async fetch(request, env, ctx) {
@@ -23,7 +29,7 @@ ${bashScript.replace(/`/g, '\\`')}
   },
 };`;
 
-  const termuxCommand = `echo 'curl -sL https://YOUR_WORKER_URL.workers.dev | bash' >> ~/.bashrc`;
+  const termuxCommand = `echo 'curl -sL ${originUrl} | bash' >> ~/.bashrc`;
 
   const handleCopy = (text: string, setter: (val: boolean) => void) => {
     navigator.clipboard.writeText(text);
@@ -90,7 +96,7 @@ ${bashScript.replace(/`/g, '\\`')}
               </button>
             </div>
             <p className="text-[10px] text-slate-500 italic">
-              Run this command inside Termux to sync startup triggers with this Cloudflare Worker. (Replace URL first)
+              Run this command inside Termux to sync startup triggers with this Cloudflare Worker.
             </p>
           </section>
         </div>
