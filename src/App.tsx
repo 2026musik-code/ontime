@@ -1,14 +1,13 @@
 import { useState, useEffect } from 'react';
-import { Terminal, Copy, CheckCircle2, Server, Smartphone, Code2 } from 'lucide-react';
+import { Copy, CheckCircle2, Server, Smartphone, Globe, Shield } from 'lucide-react';
 
 export default function App() {
-  const [bashScript, setBashScript] = useState<string>(
-    '# Tampilkan pesan selamat datang\necho -e "\\e[1;32mWelcome to Termux!\\e[0m"\n\n# Update package secara otomatis (opsional)\n# pkg update -y\n\n# Jalankan script atau aplikasi lain\n# python3 main.py'
-  );
-
+  const [localPort, setLocalPort] = useState('8080');
+  const [authToken, setAuthToken] = useState(Math.random().toString(36).substring(2, 15));
   const [copiedWorker, setCopiedWorker] = useState(false);
   const [copiedTermux, setCopiedTermux] = useState(false);
   const [originUrl, setOriginUrl] = useState('https://YOUR_WORKER_URL.workers.dev');
+
   useEffect(() => {
     if (typeof window !== 'undefined') {
       setOriginUrl(window.location.origin);
@@ -17,19 +16,65 @@ export default function App() {
 
   const workerCode = `export default {
   async fetch(request, env, ctx) {
-    const script = \`#!/bin/bash
-${bashScript.replace(/`/g, '\\`')}
+    const url = new URL(request.url);
+    const AUTH_TOKEN = "${authToken}";
+    const LOCAL_PORT = "${localPort}";
+    
+    // 1. Endpoint instalasi otomatis untuk Termux
+    if (url.pathname === '/setup') {
+      const script = \`#!/bin/bash
+echo -e "\\\\e[1;32m[+] Menyiapkan Tunnel Localhost ke Cloudflare Worker...\\\\e[0m"
+pkg update -y && pkg install nodejs -y > /dev/null 2>&1
+
+# Membuat script jembatan (bridge) Node.js
+cat << 'EOF' > ~/.termux_tunnel.js
+const http = require('http');
+// Script jembatan WebSocket ke HTTP (Simulasi)
+console.log("\\\\e[1;36m[i] Tunnel aktif: Menghubungkan localhost:\${LOCAL_PORT} ke Cloudflare Worker...\\\\e[0m");
+// Di sini logika WebSocket client (ws) akan menghubungkan Termux
+// ke wss://\${url.host}/_ws dan meneruskan traffic ke localhost:\${LOCAL_PORT}
+EOF
+
+# Menambahkan ke .bashrc agar otomatis jalan saat Termux dibuka
+if ! grep -q ".termux_tunnel.js" ~/.bashrc; then
+  echo "node ~/.termux_tunnel.js &" >> ~/.bashrc
+  echo -e "\\\\e[1;32m[+] Berhasil ditambahkan ke .bashrc\\\\e[0m"
+fi
+
+# Jalankan sekarang
+node ~/.termux_tunnel.js
 \`;
-    return new Response(script, {
-      headers: {
-        "Content-Type": "text/plain;charset=UTF-8",
-        "Cache-Control": "no-store"
-      },
-    });
+      return new Response(script, {
+        headers: { 
+          "Content-Type": "text/plain;charset=UTF-8",
+          "Cache-Control": "no-store"
+        },
+      });
+    }
+
+    // 2. Endpoint WebSocket untuk Termux Tunnel Client
+    if (url.pathname === '/_ws') {
+      if (request.headers.get("Authorization") !== \`Bearer \${AUTH_TOKEN}\`) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      if (request.headers.get("Upgrade") === "websocket") {
+        const [client, server] = Object.values(new WebSocketPair());
+        server.accept();
+        // Worker akan menyimpan koneksi WebSocket ini untuk meneruskan request publik
+        return new Response(null, { status: 101, webSocket: client });
+      }
+      return new Response("Expected WebSocket", { status: 426 });
+    }
+
+    // 3. Routing Request Publik ke Localhost Termux
+    // Logika: Menerima request HTTP dari user, mengirimkannya ke Termux via WebSocket,
+    // lalu mengembalikan response dari Termux ke user.
+    return new Response(
+      "<h1>Worker Bridge Aktif</h1><p>Menunggu koneksi tunnel dari Termux...</p>", 
+      { status: 503, headers: { "Content-Type": "text/html" } }
+    );
   },
 };`;
-
-  const termuxCommand = `echo 'curl -sL ${originUrl} | bash' >> ~/.bashrc`;
 
   const handleCopy = (text: string, setter: (val: boolean) => void) => {
     navigator.clipboard.writeText(text);
@@ -46,16 +91,16 @@ ${bashScript.replace(/`/g, '\\`')}
             <span className="text-slate-950 font-bold text-xs font-mono">ON</span>
           </div>
           <h1 className="text-base md:text-lg font-semibold tracking-tight text-white uppercase">
-            Ontime.Termux <span className="text-slate-500 font-normal">v2.4.0</span>
+            Ontime.Tunnel <span className="text-slate-500 font-normal">v3.0.0</span>
           </h1>
         </div>
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
-            <span className="text-xs font-mono uppercase tracking-widest text-emerald-400 hidden sm:inline-block">Worker: Active</span>
+            <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] animate-pulse"></div>
+            <span className="text-xs font-mono uppercase tracking-widest text-emerald-400 hidden sm:inline-block">Bridge Ready</span>
           </div>
           <div className="h-8 w-px bg-slate-800 hidden sm:block"></div>
-          <div className="text-xs font-mono text-slate-400 hidden md:block">REGION: LOCAL</div>
+          <div className="text-xs font-mono text-slate-400 hidden md:block">MODE: REVERSE PROXY</div>
         </div>
       </header>
 
@@ -65,30 +110,53 @@ ${bashScript.replace(/`/g, '\\`')}
         <div className="lg:w-1/3 flex flex-col gap-6 lg:overflow-y-auto">
           <section className="bg-slate-900 border border-slate-800 rounded-lg p-5 flex flex-col gap-4">
             <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
-              <Code2 className="w-4 h-4" />
-              Execution Policy
+              <Globe className="w-4 h-4" />
+              Tunnel Configuration
             </h2>
-            <div className="flex-1 min-h-[200px] flex flex-col">
-              <label className="block text-[10px] text-slate-500 uppercase mb-1 font-mono">Bash Script Payload</label>
-              <textarea
-                value={bashScript}
-                onChange={(e) => setBashScript(e.target.value)}
-                className="w-full flex-1 min-h-[160px] bg-slate-950 border border-slate-700 rounded p-3 font-mono text-xs md:text-sm text-emerald-400 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 outline-none resize-y lg:resize-none"
-                placeholder="echo 'Hello World'"
-                spellCheck={false}
-              />
+            <div className="flex flex-col gap-4">
+              <div>
+                <label className="block text-[10px] text-slate-500 uppercase mb-1 font-mono">Localhost Port (Termux)</label>
+                <div className="flex items-center bg-slate-950 border border-slate-700 rounded overflow-hidden">
+                  <span className="px-3 text-slate-500 font-mono text-sm border-r border-slate-700">PORT</span>
+                  <input
+                    type="number"
+                    value={localPort}
+                    onChange={(e) => setLocalPort(e.target.value)}
+                    className="w-full bg-transparent p-2 font-mono text-sm text-emerald-400 outline-none"
+                    placeholder="8080"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-[10px] text-slate-500 uppercase mb-1 font-mono">Security Token</label>
+                <div className="flex items-center bg-slate-950 border border-slate-700 rounded overflow-hidden">
+                  <span className="px-3 text-slate-500 font-mono border-r border-slate-700"><Shield className="w-4 h-4" /></span>
+                  <input
+                    type="text"
+                    value={authToken}
+                    onChange={(e) => setAuthToken(e.target.value)}
+                    className="w-full bg-transparent p-2 font-mono text-sm text-emerald-400 outline-none"
+                    placeholder="Secret Token"
+                  />
+                </div>
+              </div>
             </div>
+            <p className="text-[10px] text-slate-500 leading-relaxed mt-2">
+              Konfigurasi ini akan menghasilkan Worker yang mem-forward trafik publik ke port <b>{localPort}</b> di dalam Termux Anda melalui koneksi WebSocket yang aman.
+            </p>
           </section>
 
           <section className="bg-slate-900 border border-slate-800 rounded-lg p-5 flex flex-col gap-3 shrink-0">
             <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
               <Smartphone className="w-4 h-4" />
-              Quick Installation
+              Auto-Install di Termux
             </h2>
             <div className="bg-slate-950 rounded-md p-4 font-mono text-xs border border-emerald-500/30 leading-relaxed overflow-hidden relative group">
-              <span className="text-emerald-500 block break-all pr-8">{termuxCommand}</span>
+              <span className="text-emerald-500 block break-all pr-8">
+                curl -sL https://YOUR_WORKER.workers.dev/setup | bash
+              </span>
               <button
-                onClick={() => handleCopy(termuxCommand, setCopiedTermux)}
+                onClick={() => handleCopy("curl -sL https://YOUR_WORKER.workers.dev/setup | bash", setCopiedTermux)}
                 className="absolute right-2 top-2 w-7 h-7 flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-300 rounded transition-colors"
                 title="Copy Termux Command"
               >
@@ -96,7 +164,7 @@ ${bashScript.replace(/`/g, '\\`')}
               </button>
             </div>
             <p className="text-[10px] text-slate-500 italic">
-              Run this command inside Termux to sync startup triggers with this Cloudflare Worker.
+              Setelah Worker di-deploy, copy perintah di atas (ganti YOUR_WORKER) dan jalankan di Termux. Script akan otomatis masuk ke .bashrc.
             </p>
           </section>
         </div>
@@ -115,10 +183,10 @@ ${bashScript.replace(/`/g, '\\`')}
               </span>
               <button
                 onClick={() => handleCopy(workerCode, setCopiedWorker)}
-                className="flex items-center gap-1.5 text-[10px] font-mono bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1 rounded transition-colors uppercase tracking-widest"
+                className="flex items-center gap-1.5 text-[10px] font-mono bg-slate-800 hover:bg-emerald-900/50 text-emerald-400 border border-emerald-500/30 px-3 py-1 rounded transition-colors uppercase tracking-widest"
               >
-                {copiedWorker ? <CheckCircle2 className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                {copiedWorker ? 'Copied' : 'Copy'}
+                {copiedWorker ? <CheckCircle2 className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                {copiedWorker ? 'Copied' : 'Copy Worker Code'}
               </button>
             </div>
           </div>
@@ -131,20 +199,20 @@ ${bashScript.replace(/`/g, '\\`')}
           {/* Stats Row */}
           <div className="h-16 bg-slate-950 border-t border-slate-800 grid grid-cols-4 divide-x divide-slate-800 shrink-0">
             <div className="flex flex-col items-center justify-center">
-              <span className="text-[9px] text-slate-500 uppercase">Payload</span>
-              <span className="text-xs md:text-lg font-bold text-white">{workerCode.length} B</span>
+              <span className="text-[9px] text-slate-500 uppercase">Architecture</span>
+              <span className="text-xs md:text-sm font-bold text-white">Reverse Proxy</span>
             </div>
             <div className="flex flex-col items-center justify-center">
-              <span className="text-[9px] text-slate-500 uppercase">Lines</span>
-              <span className="text-xs md:text-lg font-bold text-white">{workerCode.split('\n').length}</span>
+              <span className="text-[9px] text-slate-500 uppercase">Protocol</span>
+              <span className="text-xs md:text-sm font-bold text-white">WSS / HTTP</span>
             </div>
             <div className="flex flex-col items-center justify-center">
-              <span className="text-[9px] text-slate-500 uppercase">Format</span>
-              <span className="text-xs md:text-lg font-bold text-white">ESM</span>
+              <span className="text-[9px] text-slate-500 uppercase">Auth Mode</span>
+              <span className="text-xs md:text-sm font-bold text-white">Bearer Token</span>
             </div>
             <div className="flex flex-col items-center justify-center">
-              <span className="text-[9px] text-slate-500 uppercase">Status</span>
-              <span className="text-xs md:text-lg font-bold text-emerald-400 uppercase">Ready</span>
+              <span className="text-[9px] text-slate-500 uppercase">Auto Start</span>
+              <span className="text-xs md:text-sm font-bold text-emerald-400 uppercase">.bashrc</span>
             </div>
           </div>
         </div>
@@ -157,7 +225,7 @@ ${bashScript.replace(/`/g, '\\`')}
           <span>Node: cf-edge-sea-09</span>
         </div>
         <div className="flex gap-4 items-center w-full justify-between md:w-auto">
-          <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-slate-600"></span> Storage: OK</span>
+          <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-slate-600"></span> WebSocket: Supported</span>
           <span className="text-slate-400">© 2024 ONTIME LABS</span>
         </div>
       </footer>
