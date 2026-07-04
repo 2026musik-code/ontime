@@ -126,7 +126,7 @@ function connect() {
   });
 
   ws.on('open', () => {
-    console.log('\\x1b[32m[+] Tunnel terhubung! Publik URL Anda:\\x1b[0m ' + WORKER_URL + '/_status');
+    console.log('\\x1b[32m[+] Tunnel terhubung! Publik URL Anda:\\x1b[0m ' + WORKER_URL + '/termux');
     console.log('\\x1b[36m[*] Meneruskan traffic publik ke localhost:\\x1b[0m' + LOCAL_PORT_VAL);
   });
 
@@ -298,7 +298,7 @@ cd ~/.termux_tunnel && node tunnel.js
     ${isOnlineHere ? 
        `<div class="badge online"><div class="dot dot-green"></div> ONLINE & TERHUBUNG</div>
        <p>Tunnel Termux sedang aktif dan terhubung ke node Cloudflare ini.</p>
-       <p>Anda dapat mengakses server localhost Termux Anda melalui URL Worker ini (kecuali path <code>/_status</code>, <code>/setup</code>, dan <code>/</code>).</p>`
+       <p>Anda dapat mengakses server localhost Termux Anda melalui path: <br><br> <b><a href="/termux" style="color:#38bdf8;text-decoration:none;">/termux</a></b></p>`
     : isOnlineElsewhere ? 
        `<div class="badge warning"><div class="dot dot-yellow"></div> ONLINE (NODE LAIN)</div>
        <p>Termux terhubung, tetapi ke server edge Cloudflare yang berbeda.</p>
@@ -330,11 +330,13 @@ cd ~/.termux_tunnel && node tunnel.js
       return new Response(html, { status: isOnlineHere ? 200 : 502, headers: { "Content-Type": "text/html" } });
     }
 
-    // Proxy request ke Termux jika tunnelWs terhubung (dan BUKAN request ke root '/' atau '/assets/')
-    // Root dan Assets akan dilayani oleh Cloudflare Pages (React UI).
-    if (tunnelWs && url.pathname !== '/' && !url.pathname.startsWith('/assets/')) {
+    // Proxy request ke Termux jika tunnelWs terhubung HANYA untuk path /termux
+    if (tunnelWs && url.pathname.startsWith('/termux')) {
       const reqId = crypto.randomUUID();
       let reqBodyBase64 = null;
+      
+      const targetUrl = new URL(request.url);
+      targetUrl.pathname = targetUrl.pathname.replace(/^\/termux/, '') || '/';
       
       if (request.body) {
         const buffer = await request.arrayBuffer();
@@ -349,7 +351,7 @@ cd ~/.termux_tunnel && node tunnel.js
       const reqData = {
         id: reqId,
         method: request.method,
-        url: request.url,
+        url: targetUrl.toString(),
         headers: Object.fromEntries(request.headers.entries()),
         body: reqBodyBase64
       };
