@@ -14,14 +14,71 @@ export default {
         const body = await request.json();
         if (body.port) await env.accounts_kv.put('LOCAL_PORT', body.port.toString());
         if (body.token) await env.accounts_kv.put('AUTH_TOKEN', body.token);
+        
+        // Simpan ke riwayat (saved configs)
+        if (body.port && body.token) {
+           let configs = [];
+           try {
+              const saved = await env.accounts_kv.get('SAVED_CONFIGS');
+              if (saved) configs = JSON.parse(saved);
+           } catch(e) {}
+           if (!configs.find(c => c.port === body.port.toString() && c.token === body.token)) {
+               configs.push({ id: Date.now().toString(), port: body.port.toString(), token: body.token });
+               await env.accounts_kv.put('SAVED_CONFIGS', JSON.stringify(configs));
+           }
+        }
+
         return new Response(JSON.stringify({ success: true }), {
           headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
         });
       } catch(e) {
         return new Response(JSON.stringify({ error: e.message }), { 
-          status: 500, headers: { "Access-Control-Allow-Origin": "*" } 
+          status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } 
         });
       }
+    }
+
+    // --- API Endpoint: Ambil daftar Config ---
+    if (url.pathname === '/api/configs' && request.method === 'GET') {
+      try {
+         let configs = [];
+         if (env.accounts_kv) {
+            const saved = await env.accounts_kv.get('SAVED_CONFIGS');
+            if (saved) configs = JSON.parse(saved);
+         }
+         return new Response(JSON.stringify(configs), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }});
+      } catch(e) {
+         return new Response("[]", { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }});
+      }
+    }
+
+    // --- API Endpoint: Hapus Config ---
+    if (url.pathname === '/api/configs' && request.method === 'DELETE') {
+       try {
+          if (!env.accounts_kv) throw new Error("KV missing");
+          const body = await request.json();
+          let configs = [];
+          const saved = await env.accounts_kv.get('SAVED_CONFIGS');
+          if (saved) configs = JSON.parse(saved);
+          
+          configs = configs.filter(c => c.id !== body.id);
+          await env.accounts_kv.put('SAVED_CONFIGS', JSON.stringify(configs));
+          
+          return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }});
+       } catch(e) {
+          return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }});
+       }
+    }
+
+    // Handle CORS preflight
+    if (request.method === 'OPTIONS') {
+      return new Response(null, {
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type"
+        }
+      });
     }
 
     // Ambil Config dari KV accounts_kv (dengan fallback aman)

@@ -18,10 +18,26 @@ export default function App() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState('');
+  const [savedConfigs, setSavedConfigs] = useState<{id: string, port: string, token: string}[]>([]);
 
   const displayUrl = workerUrl.trim() ? (workerUrl.startsWith('http') ? workerUrl : `https://${workerUrl}`) : 'https://YOUR_WORKER.workers.dev';
   const cleanUrl = displayUrl.replace(/\/$/, '');
   const installCmd = `curl -sL ${cleanUrl}/setup | bash`;
+
+  const fetchConfigs = async () => {
+    if (!workerUrl.trim() || workerUrl.includes('YOUR_WORKER')) return;
+    try {
+      const response = await fetch(`${cleanUrl}/api/configs`);
+      if (response.ok) {
+        const data = await response.json();
+        if (Array.isArray(data)) setSavedConfigs(data);
+      }
+    } catch(e) {}
+  };
+
+  useEffect(() => {
+    fetchConfigs();
+  }, [cleanUrl]);
 
   const saveConfigToKV = async () => {
     if (!workerUrl.trim() || workerUrl.includes('YOUR_WORKER')) {
@@ -53,6 +69,7 @@ export default function App() {
       }
       
       setSaveStatus('success');
+      fetchConfigs();
     } catch (err: any) {
       setSaveStatus('error');
       setErrorMessage(err.message || 'Gagal menyimpan konfigurasi. Pastikan Worker sudah di-deploy dengan benar.');
@@ -85,22 +102,68 @@ export default {
         const body = await request.json();
         if (body.port) await env.accounts_kv.put('LOCAL_PORT', body.port.toString());
         if (body.token) await env.accounts_kv.put('AUTH_TOKEN', body.token);
+
+        // Simpan ke riwayat (saved configs)
+        if (body.port && body.token) {
+           let configs = [];
+           try {
+              const saved = await env.accounts_kv.get('SAVED_CONFIGS');
+              if (saved) configs = JSON.parse(saved);
+           } catch(e) {}
+           if (!configs.find(c => c.port === body.port.toString() && c.token === body.token)) {
+               configs.push({ id: Date.now().toString(), port: body.port.toString(), token: body.token });
+               await env.accounts_kv.put('SAVED_CONFIGS', JSON.stringify(configs));
+           }
+        }
+
         return new Response(JSON.stringify({ success: true }), {
           headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
         });
       } catch(e) {
         return new Response(JSON.stringify({ error: e.message }), { 
-          status: 500, headers: { "Access-Control-Allow-Origin": "*" } 
+          status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } 
         });
       }
     }
 
-    // Handle CORS preflight untuk Web UI
+    // --- API Endpoint: Ambil daftar Config ---
+    if (url.pathname === '/api/configs' && request.method === 'GET') {
+      try {
+         let configs = [];
+         if (env.accounts_kv) {
+            const saved = await env.accounts_kv.get('SAVED_CONFIGS');
+            if (saved) configs = JSON.parse(saved);
+         }
+         return new Response(JSON.stringify(configs), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }});
+      } catch(e) {
+         return new Response("[]", { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }});
+      }
+    }
+
+    // --- API Endpoint: Hapus Config ---
+    if (url.pathname === '/api/configs' && request.method === 'DELETE') {
+       try {
+          if (!env.accounts_kv) throw new Error("KV missing");
+          const body = await request.json();
+          let configs = [];
+          const saved = await env.accounts_kv.get('SAVED_CONFIGS');
+          if (saved) configs = JSON.parse(saved);
+          
+          configs = configs.filter(c => c.id !== body.id);
+          await env.accounts_kv.put('SAVED_CONFIGS', JSON.stringify(configs));
+          
+          return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }});
+       } catch(e) {
+          return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }});
+       }
+    }
+
+    // Handle CORS preflight
     if (request.method === 'OPTIONS') {
       return new Response(null, {
         headers: {
           "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "POST, OPTIONS",
+          "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
           "Access-Control-Allow-Headers": "Content-Type"
         }
       });
@@ -600,6 +663,50 @@ cd ~/.termux_tunnel && node tunnel.js
             <p className="text-[10px] text-slate-500 italic">
               Setelah konfigurasi disimpan (tombol hijau), copy perintah di atas dan jalankan di Termux. URL dan Token sudah terhubung otomatis.
             </p>
+          </section>
+
+          <section className="bg-slate-900 border border-slate-800 rounded-lg p-5 flex flex-col gap-3 shrink-0">
+            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center justify-between">
+              <span className="flex items-center gap-2"><Server className="w-4 h-4" /> 4. Saved Configs (Riwayat)</span>
+              <button onClick={fetchConfigs} className="text-emerald-400 hover:text-emerald-300" title="Refresh configs">🔄</button>
+            </h2>
+            {savedConfigs.length === 0 ? (
+              <p className="text-[11px] text-slate-500 text-center py-4 bg-slate-950 rounded border border-slate-800">Belum ada config yang tersimpan.</p>
+            ) : (
+              <div className="flex flex-col gap-2 max-h-48 overflow-y-auto pr-1">
+                {savedConfigs.map(config => (
+                  <div key={config.id} className="bg-slate-950 border border-slate-800 p-3 rounded flex justify-between items-center group hover:border-emerald-500/50 transition-colors">
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs font-bold text-emerald-400 font-mono">Port: {config.port}</span>
+                      <span className="text-[10px] text-slate-500 font-mono truncate max-w-[150px]">Tkn: {config.token.substring(0, 8)}...</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={() => { setLocalPort(config.port); setAuthToken(config.token); }}
+                        className="text-[10px] bg-slate-800 hover:bg-emerald-600 hover:text-white text-slate-300 px-2 py-1 rounded transition-colors"
+                      >
+                        Gunakan
+                      </button>
+                      <button 
+                        onClick={async () => {
+                           try {
+                             await fetch(`${cleanUrl}/api/configs`, {
+                               method: 'DELETE',
+                               headers: { 'Content-Type': 'application/json' },
+                               body: JSON.stringify({ id: config.id })
+                             });
+                             fetchConfigs();
+                           } catch(e) {}
+                        }}
+                        className="text-[10px] bg-slate-800 hover:bg-red-600 hover:text-white text-slate-300 px-2 py-1 rounded transition-colors"
+                      >
+                        Hapus
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </section>
         </div>
 
