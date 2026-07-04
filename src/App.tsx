@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Copy, CheckCircle2, Server, Smartphone, Globe, Shield } from 'lucide-react';
+import { Copy, CheckCircle2, Server, Smartphone, Globe, Shield, Link2 } from 'lucide-react';
 
 export default function App() {
   const [localPort, setLocalPort] = useState('8080');
   const [authToken, setAuthToken] = useState(Math.random().toString(36).substring(2, 15));
+  const [workerUrl, setWorkerUrl] = useState('');
   const [copiedWorker, setCopiedWorker] = useState(false);
   const [copiedTermux, setCopiedTermux] = useState(false);
   const [originUrl, setOriginUrl] = useState('https://YOUR_WORKER_URL.workers.dev');
@@ -13,6 +14,10 @@ export default function App() {
       setOriginUrl(window.location.origin);
     }
   }, []);
+
+  const displayUrl = workerUrl.trim() ? (workerUrl.startsWith('http') ? workerUrl : `https://${workerUrl}`) : 'https://YOUR_WORKER.workers.dev';
+  const cleanUrl = displayUrl.replace(/\/$/, '');
+  const installCmd = `curl -sL ${cleanUrl}/setup | bash`;
 
   const workerCode = `export default {
   async fetch(request, env, ctx) {
@@ -140,6 +145,22 @@ node ~/.termux_tunnel.js
                   />
                 </div>
               </div>
+              <div className="pt-2 border-t border-slate-800">
+                <label className="block text-[10px] text-slate-500 uppercase mb-1 font-mono">1. Deploy & Paste Worker URL</label>
+                <div className="flex items-center bg-slate-950 border border-slate-700 rounded overflow-hidden">
+                  <span className="px-3 text-slate-500 font-mono border-r border-slate-700"><Link2 className="w-4 h-4" /></span>
+                  <input
+                    type="text"
+                    value={workerUrl}
+                    onChange={(e) => setWorkerUrl(e.target.value)}
+                    className="w-full bg-transparent p-2 font-mono text-sm text-emerald-400 outline-none"
+                    placeholder="https://my-tunnel.workers.dev"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-500 leading-relaxed mt-2">
+                  Masukkan URL Worker Cloudflare yang telah di-deploy untuk men-generate script instalasi Termux di bawah ini.
+                </p>
+              </div>
             </div>
             <p className="text-[10px] text-slate-500 leading-relaxed mt-2">
               Konfigurasi ini akan menghasilkan Worker yang mem-forward trafik publik ke port <b>{localPort}</b> di dalam Termux Anda melalui koneksi WebSocket yang aman.
@@ -149,14 +170,14 @@ node ~/.termux_tunnel.js
           <section className="bg-slate-900 border border-slate-800 rounded-lg p-5 flex flex-col gap-3 shrink-0">
             <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
               <Smartphone className="w-4 h-4" />
-              Auto-Install di Termux
+              2. Auto-Install di Termux
             </h2>
             <div className="bg-slate-950 rounded-md p-4 font-mono text-xs border border-emerald-500/30 leading-relaxed overflow-hidden relative group">
               <span className="text-emerald-500 block break-all pr-8">
-                curl -sL https://YOUR_WORKER.workers.dev/setup | bash
+                {installCmd}
               </span>
               <button
-                onClick={() => handleCopy("curl -sL https://YOUR_WORKER.workers.dev/setup | bash", setCopiedTermux)}
+                onClick={() => handleCopy(installCmd, setCopiedTermux)}
                 className="absolute right-2 top-2 w-7 h-7 flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-300 rounded transition-colors"
                 title="Copy Termux Command"
               >
@@ -164,7 +185,7 @@ node ~/.termux_tunnel.js
               </button>
             </div>
             <p className="text-[10px] text-slate-500 italic">
-              Setelah Worker di-deploy, copy perintah di atas (ganti YOUR_WORKER) dan jalankan di Termux. Script akan otomatis masuk ke .bashrc.
+              Copy perintah di atas dan jalankan di Termux. Script akan otomatis masuk ke .bashrc.
             </p>
           </section>
         </div>
