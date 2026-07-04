@@ -46,11 +46,7 @@ export default function App() {
         try {
           const errData = await response.json();
           if (errData.error) {
-            if (errData.error.includes("Cannot read properties of undefined")) {
-              errDetails = "KV 'accounts_kv' BELUM DI-BIND! Silakan ikuti instruksi Setup KV di atas.";
-            } else {
-              errDetails = `Server Error: ${errData.error}`;
-            }
+            errDetails = errData.error;
           }
         } catch(e) {}
         throw new Error(`Gagal menyimpan: ${errDetails}`);
@@ -83,6 +79,9 @@ export default {
     // --- API Endpoint: Simpan Config dari Web UI ke KV ---
     if (url.pathname === '/api/config' && request.method === 'POST') {
       try {
+        if (!env.accounts_kv) {
+          throw new Error("KV 'accounts_kv' belum di-bind di Settings Cloudflare Anda.");
+        }
         const body = await request.json();
         if (body.port) await env.accounts_kv.put('LOCAL_PORT', body.port.toString());
         if (body.token) await env.accounts_kv.put('AUTH_TOKEN', body.token);
@@ -107,9 +106,13 @@ export default {
       });
     }
 
-    // Ambil Config dari KV accounts_kv
-    const AUTH_TOKEN = (await env.accounts_kv?.get('AUTH_TOKEN')) || "default_token";
-    const LOCAL_PORT = (await env.accounts_kv?.get('LOCAL_PORT')) || "8080";
+    // Ambil Config dari KV accounts_kv (dengan fallback aman)
+    let AUTH_TOKEN = "default_token";
+    let LOCAL_PORT = "8080";
+    if (env.accounts_kv) {
+       AUTH_TOKEN = (await env.accounts_kv.get('AUTH_TOKEN')) || "default_token";
+       LOCAL_PORT = (await env.accounts_kv.get('LOCAL_PORT')) || "8080";
+    }
 
     // --- 1. Endpoint instalasi otomatis untuk Termux ---
     if (url.pathname === '/setup') {
@@ -460,18 +463,21 @@ cd ~/.termux_tunnel && node tunnel.js
               1. Setup KV (Wajib!)
             </h2>
             <p className="text-[11px] text-slate-400 leading-relaxed">
-              Worker membutuhkan KV untuk menyimpan konfigurasi. Jika Anda mendeploy via <b>Wrangler</b>:
+              Jika Anda mendeploy ini sebagai <b>Cloudflare Pages</b>, API Tunnel sudah terpasang otomatis! Anda <b>TIDAK PERLU</b> membuat Worker terpisah. Cukup lakukan Binding KV:
+            </p>
+            <p className="text-[11px] text-slate-400 leading-relaxed bg-slate-950 p-2 border border-slate-800 rounded">
+              1. Buka <b>Cloudflare Pages</b> Anda &gt; <b>Settings</b>.<br/>
+              2. Pilih <b>Bindings</b> &gt; <b>KV Namespace Bindings</b> &gt; Add.<br/>
+              3. Variable name: <code className="text-emerald-400 font-bold">accounts_kv</code>.<br/>
+              4. Pilih/buat KV namespace, lalu <b>Deploy</b> ulang.<br/>
+              5. Masukkan URL web ini ke form di bawah, lalu klik Simpan.
+            </p>
+            <p className="text-[11px] text-slate-500 leading-relaxed mt-2 border-t border-slate-800 pt-2">
+              Atau, jika mendeploy terpisah via Worker Wrangler:
             </p>
             <div className="bg-slate-950 p-2 rounded border border-slate-800 text-sky-400 font-mono text-[11px] select-all">
               npx wrangler kv:namespace create accounts_kv
             </div>
-            <p className="text-[11px] text-slate-400 leading-relaxed mt-2">
-              Jika menggunakan <b>Cloudflare Dashboard</b> (tanpa wrangler):<br/>
-              1. Buka halaman Worker Anda &gt; <b>Settings</b>.<br/>
-              2. Scroll ke <b>Bindings</b> &gt; <b>KV Namespace Bindings</b> &gt; Add.<br/>
-              3. Variable name: <code className="text-emerald-400">accounts_kv</code>.<br/>
-              4. Pilih/buat KV namespace, lalu <b>Deploy</b> ulang.
-            </p>
           </section>
 
           <section className="bg-slate-900 border border-slate-800 rounded-lg p-5 flex flex-col gap-4">
