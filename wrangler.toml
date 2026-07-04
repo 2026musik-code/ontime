@@ -1,6 +1,9 @@
 name = "termux-tunnel"
 compatibility_date = "2024-03-20"
 
+[assets]
+directory = "dist"
+
 # Halaman ini sangat penting untuk menghubungkan Worker Anda dengan KV Database.
 # Ganti "MASUKKAN_ID_KV_ANDA_DISINI" dengan ID asli dari KV Anda.
 [[kv_namespaces]]
