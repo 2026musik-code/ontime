@@ -333,9 +333,42 @@ cd ~/.termux_tunnel && node tunnel.js
     // Proxy request ke Termux HANYA untuk path /termux
     if (url.pathname.startsWith('/termux')) {
       if (!tunnelWs) {
-        return new Response("Tunnel Termux offline. Buka dashboard web dan jalankan script di Termux terlebih dahulu.", { 
+        let statusData = null;
+        try {
+          if (env.accounts_kv) statusData = await env.accounts_kv.get('TERMUX_STATUS', { type: 'json' });
+        } catch(e) {}
+        const isOnlineElsewhere = statusData && statusData.status === 'online';
+        
+        const html = `<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Menghubungkan ke Tunnel...</title>
+  ${isOnlineElsewhere ? '<meta http-equiv="refresh" content="2">' : ''}
+  <style>
+    body { font-family: system-ui, sans-serif; background: #020617; color: #f8fafc; display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100vh; margin: 0; text-align: center; padding: 20px;}
+    .card { background: #0f172a; border: 1px solid #1e293b; padding: 30px; border-radius: 12px; max-width: 500px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); }
+    h1 { color: #ef4444; margin-top: 0; font-size: 1.5rem; }
+    h1.warning { color: #eab308; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    ${isOnlineElsewhere ? 
+      `<h1 class="warning">Mencari Node Tunnel...</h1>
+       <p>Termux terhubung, tetapi berada di server Cloudflare yang berbeda (Isolate Mismatch).</p>
+       <p>Halaman ini akan otomatis refresh setiap 2 detik sampai terhubung ke node yang tepat.</p>` 
+      : 
+      `<h1>Tunnel Offline</h1>
+       <p>Tidak ada koneksi aktif dari Termux. Buka dashboard web dan jalankan script instalasi di Termux terlebih dahulu.</p>
+       <button onclick="location.reload()" style="padding:10px 20px; background:#38bdf8; color:#020617; border:none; border-radius:5px; font-weight:bold; cursor:pointer; margin-top:20px;">Coba Lagi</button>`
+    }
+  </div>
+</body>
+</html>`;
+        return new Response(html, { 
           status: 502,
-          headers: { "Content-Type": "text/plain" }
+          headers: { "Content-Type": "text/html" }
         });
       }
 
