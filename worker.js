@@ -330,8 +330,15 @@ cd ~/.termux_tunnel && node tunnel.js
       return new Response(html, { status: isOnlineHere ? 200 : 502, headers: { "Content-Type": "text/html" } });
     }
 
-    // Proxy request ke Termux jika tunnelWs terhubung HANYA untuk path /termux
-    if (tunnelWs && url.pathname.startsWith('/termux')) {
+    // Proxy request ke Termux HANYA untuk path /termux
+    if (url.pathname.startsWith('/termux')) {
+      if (!tunnelWs) {
+        return new Response("Tunnel Termux offline. Buka dashboard web dan jalankan script di Termux terlebih dahulu.", { 
+          status: 502,
+          headers: { "Content-Type": "text/plain" }
+        });
+      }
+
       const reqId = crypto.randomUUID();
       let reqBodyBase64 = null;
       
