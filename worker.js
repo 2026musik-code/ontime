@@ -115,25 +115,23 @@ export default {
     // --- 1. Endpoint instalasi otomatis untuk Termux ---
     if (url.pathname === '/setup') {
       const script = `#!/bin/bash
-# Force stdin to tty for interactive input when piped from curl
-exec < /dev/tty
 
 echo -e "\\e[1;34m[+]===============================================[+]\\e[0m"
 echo -e "\\e[1;34m |      ONTIME TERMUX TUNNEL INSTALLER           |\\e[0m"
 echo -e "\\e[1;34m[+]===============================================[+]\\e[0m"
 
 echo -e "\\e[1;36mPilih mode yang ingin Anda jalankan:\\e[0m"
-echo "  1) Ekspos proyek saya yang sudah berjalan (Misal: 9router di port 20128)"
+echo "  1) Ekspos proyek saya yang sudah berjalan (Misal: port 20128)"
 echo "  2) Buka File Explorer Termux di Web (Otomatis jalankan http-server)"
-read -p "Pilihan Anda [1/2, Default: 1]: " MODE_PILIHAN
+read -p "Pilihan Anda [1/2, Default: 1]: " MODE_PILIHAN < /dev/tty
 MODE_PILIHAN=\${MODE_PILIHAN:-1}
 
 if [ "$MODE_PILIHAN" == "1" ]; then
-  read -p "Masukkan port proyek Anda (Contoh: 20128): " INPUT_PORT
+  read -p "Masukkan port proyek Anda (Contoh: 20128): " INPUT_PORT < /dev/tty
   PORT_TO_USE=\${INPUT_PORT:-8080}
   echo -e "\\e[1;32m[+] Menyiapkan Tunnel untuk proyek Anda di port \$PORT_TO_USE...\\e[0m"
 else
-  read -p "Masukkan port untuk File Explorer [Default: ${LOCAL_PORT}]: " INPUT_PORT
+  read -p "Masukkan port untuk File Explorer [Default: ${LOCAL_PORT}]: " INPUT_PORT < /dev/tty
   PORT_TO_USE=\${INPUT_PORT:-${LOCAL_PORT}}
   echo -e "\\e[1;32m[+] Menyiapkan Tunnel & File Explorer di port \$PORT_TO_USE...\\e[0m"
 fi
