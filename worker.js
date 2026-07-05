@@ -115,30 +115,51 @@ export default {
     // --- 1. Endpoint instalasi otomatis untuk Termux ---
     if (url.pathname === '/setup') {
       const script = `#!/bin/bash
+# Force stdin to tty for interactive input when piped from curl
+exec < /dev/tty
+
 echo -e "\\e[1;34m[+]===============================================[+]\\e[0m"
 echo -e "\\e[1;34m |      ONTIME TERMUX TUNNEL INSTALLER           |\\e[0m"
 echo -e "\\e[1;34m[+]===============================================[+]\\e[0m"
-echo -e "\\e[1;32m[+] Menyiapkan Tunnel Localhost ke Cloudflare...\\e[0m"
-echo -e "\\e[1;33m[*] Menginstall Node.js...\\e[0m"
+
+echo -e "\\e[1;36mPilih mode yang ingin Anda jalankan:\\e[0m"
+echo "  1) Ekspos proyek saya yang sudah berjalan (Misal: 9router di port 20128)"
+echo "  2) Buka File Explorer Termux di Web (Otomatis jalankan http-server)"
+read -p "Pilihan Anda [1/2, Default: 1]: " MODE_PILIHAN
+MODE_PILIHAN=\${MODE_PILIHAN:-1}
+
+if [ "$MODE_PILIHAN" == "1" ]; then
+  read -p "Masukkan port proyek Anda (Contoh: 20128): " INPUT_PORT
+  PORT_TO_USE=\${INPUT_PORT:-8080}
+  echo -e "\\e[1;32m[+] Menyiapkan Tunnel untuk proyek Anda di port \$PORT_TO_USE...\\e[0m"
+else
+  read -p "Masukkan port untuk File Explorer [Default: ${LOCAL_PORT}]: " INPUT_PORT
+  PORT_TO_USE=\${INPUT_PORT:-${LOCAL_PORT}}
+  echo -e "\\e[1;32m[+] Menyiapkan Tunnel & File Explorer di port \$PORT_TO_USE...\\e[0m"
+fi
+
+echo -e "\\e[1;33m[*] Menginstall dependensi...\\e[0m"
 pkg install nodejs -y > /dev/null 2>&1
 mkdir -p ~/.termux_tunnel
 cd ~/.termux_tunnel
 if [ ! -f package.json ]; then
   npm init -y > /dev/null 2>&1
 fi
-echo -e "\\e[1;33m[*] Menginstall modul localtunnel & http-server...\\e[0m"
 npm install localtunnel http-server > /dev/null 2>&1
 
-echo -e "\\e[1;33m[*] Memulai Web Server lokal di port ${LOCAL_PORT} (menampilkan file)...\\e[0m"
-pkill -f "http-server" > /dev/null 2>&1 || true
-npx http-server ~ -p ${LOCAL_PORT} --cors -c-1 -s &
+if [ "$MODE_PILIHAN" == "2" ]; then
+  echo -e "\\e[1;33m[*] Memulai Web Server lokal (http-server) di port \$PORT_TO_USE...\\e[0m"
+  pkill -f "http-server" > /dev/null 2>&1 || true
+  npx http-server ~ -p \$PORT_TO_USE --cors -c-1 -s &
+fi
 
 cat << 'TUNNEL_EOF' > ~/.termux_tunnel/tunnel.js
 const localtunnel = require('localtunnel');
 
 const WORKER_URL = '${url.origin}';
 const AUTH_TOKEN_VAL = '${AUTH_TOKEN}';
-const LOCAL_PORT_VAL = ${LOCAL_PORT};
+// Baca port dari argumen CLI (process.argv[2])
+const LOCAL_PORT_VAL = process.argv[2] || ${LOCAL_PORT};
 
 async function connect() {
   console.log('[*] Memulai localtunnel di port ' + LOCAL_PORT_VAL + '...');
@@ -179,7 +200,7 @@ connect();
 TUNNEL_EOF
 
 echo -e "\\e[1;32m[+] Instalasi selesai. Menjalankan tunnel...\\e[0m"
-node ~/.termux_tunnel/tunnel.js
+node ~/.termux_tunnel/tunnel.js \$PORT_TO_USE
 `;
       return new Response(script, {
         headers: { "Content-Type": "text/plain; charset=utf-8" }
